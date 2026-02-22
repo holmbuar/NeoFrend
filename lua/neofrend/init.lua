@@ -4,6 +4,7 @@ local chat_buf = nil
 local chat_win = nil
 local chat_history = {}
 local current_model = "gemini-3-flash-preview"
+local current_job = nil
 
 local function create_window()
   if chat_win and vim.api.nvim_win_is_valid(chat_win) then
@@ -28,6 +29,15 @@ local function create_window()
     vim.keymap.set("n", "q", function()
       vim.api.nvim_win_close(0, true)
     end, { buffer = chat_buf, silent = true, desc = "Close NeoFrend" })
+
+    -- Keymap to abort running process
+    vim.keymap.set("n", "<Esc>", function()
+      if current_job then
+        current_job:kill(9)
+        current_job = nil
+        print("NeoFrend: Process aborted.")
+      end
+    end, { buffer = chat_buf, silent = true, desc = "Abort running process" })
 
     -- Keymap to add a new line without submitting
     vim.keymap.set("i", "<S-CR>", "<CR>", { buffer = chat_buf, noremap = true, silent = true, desc = "New line" })
@@ -54,7 +64,7 @@ local function create_window()
     row = row,
     style = "minimal",
     border = "rounded",
-    title = " NeoFrend (Press Enter to send, q to quit) ",
+    title = " NeoFrend (Enter: send, Esc: abort, q: quit) ",
     title_pos = "center"
   })
 
@@ -147,7 +157,8 @@ function M.submit_prompt()
       sys_opts.cwd = agent_cwd
     end
     
-    vim.system(cmd, sys_opts, vim.schedule_wrap(function(out)
+    current_job = vim.system(cmd, sys_opts, vim.schedule_wrap(function(out)
+      current_job = nil
       local reply = out.stdout or ""
       if out.code ~= 0 then
         reply = reply .. "\n\n**Error:**\n```\n" .. (out.stderr or "") .. "\n```"
@@ -215,12 +226,13 @@ Format your answers in clean, standard Markdown.
   local tmp_file = vim.fn.tempname()
   vim.fn.writefile({json_payload}, tmp_file)
 
-  vim.system({
+  current_job = vim.system({
     "curl", "-s", "-X", "POST",
     "-H", "Content-Type: application/json",
     "-d", "@" .. tmp_file,
     url
   }, { text = true }, vim.schedule_wrap(function(out)
+    current_job = nil
     vim.fn.delete(tmp_file)
     if out.code ~= 0 then
       vim.api.nvim_buf_set_lines(chat_buf, loading_line, loading_line + 1, false, { "Error: Network request failed." })

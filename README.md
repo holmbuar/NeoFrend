@@ -42,15 +42,16 @@ Using [lazy.nvim](https://github.com/folke/lazy.nvim):
 1. **Toggle NeoFrend**: Press `<leader>b` to open or close the floating window.
 2. **Chat**: Type your prompt under the `## User` heading.
 3. **Send**: Press `Enter` (in Insert or Normal mode) to submit your prompt to Gemini. The response will stream below.
-4. **Agent Mode (The Magic)**: You can invoke the autonomous Gemini Agent to read, write, and execute commands on your behalf.
+4. **Abort**: Press `Esc` in Normal mode to instantly kill a running agent or network request.
+5. **Agent Mode (The Magic)**: You can invoke the autonomous Gemini Agent to read, write, and execute commands on your behalf.
    * `/do <prompt>`: Runs the agent in your **current workspace** (e.g., `/do create a python script that prints hello world and run it`).
    * `/config <prompt>`: Runs the agent directly in your **Neovim configuration directory** (`~/.config/nvim`). Perfect for querying your setup, installing plugins, or changing editor settings. Examples:
      * `/config what git plugins am I currently using?`
      * `/config what is my leader key mapped to?`
      * `/config install Neogit in my lazy.nvim setup`
    * **⚠️ WARNING**: Using `/do` or `/config` gives the AI autonomous access to your system and files without prompting for confirmation (YOLO mode). Use with extreme caution. The NeoFrend developers assume absolutely no responsibility for any unintended changes, data loss, or system issues caused by the agent. Review your git diffs frequently!
-5. **Change Model**: Use the `:Frend <model_name>` command to switch models on the fly (e.g., `:Frend gemini-2.5-pro`). Running `:Frend` without arguments prints the current model. The default is `gemini-3-flash-preview`.
-6. **Close**: Press `q` in Normal mode to dismiss the window.
+6. **Change Model**: Use the `:Frend <model_name>` command to switch models on the fly (e.g., `:Frend gemini-2.5-pro`). Running `:Frend` without arguments prints the current model. The default is `gemini-3-flash-preview`.
+7. **Close**: Press `q` in Normal mode to dismiss the window.
 
 ## Examples
 
