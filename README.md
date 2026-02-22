@@ -52,8 +52,9 @@ Using [lazy.nvim](https://github.com/folke/lazy.nvim):
 5. **Change Model**: Use the `:Frend <model_name>` command to switch models on the fly (e.g., `:Frend gemini-2.5-pro`). Running `:Frend` without arguments prints the current model. The default is `gemini-3-flash-preview`.
 6. **Close**: Press `q` in Normal mode to dismiss the window.
 
-## Example
+## Examples
 
+### General Chat
 ```markdown
 ## User
 how to exit?
@@ -68,4 +69,22 @@ So, the full command is:
 
 If you have unsaved changes in your file (buffer) and want to force Neovim to close anyway, you can use:
 `:q!`
+```
+
+### Agent Mode (Querying Config)
+```markdown
+## User
+/config what is my Git plugin?
+
+## NeoFrend (Agent)
+**⚠️ WARNING: Entering Autonomous Mode**
+> The agent is now executing commands and modifying files in your **Neovim configuration (~/.config/nvim)** without confirmation.
+> *NeoFrend developers assume no responsibility for data loss or unintended changes.*
+
+Running Gemini CLI agent... (this may take a while)
+
+Based on your `lazy-lock.json` and Neovim configuration files, you have two Git plugins installed:
+
+1. **`neogit`**: A Magit clone for full Git operations within Neovim.
+2. **`gitsigns.nvim`**: Provides inline Git decorations (signs, diffs, and blame) in the editor.
 ```
