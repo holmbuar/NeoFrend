@@ -69,8 +69,17 @@ function M.toggle()
     chat_win = nil
   else
     create_window()
-    -- Move cursor to bottom
+    
+    -- Ensure there is an empty line at the bottom for the user to type
     local line_count = vim.api.nvim_buf_line_count(chat_buf)
+    local last_line = vim.api.nvim_buf_get_lines(chat_buf, line_count - 1, line_count, false)[1]
+    
+    if last_line == "## User" then
+      vim.api.nvim_buf_set_lines(chat_buf, line_count, line_count, false, { "" })
+      line_count = line_count + 1
+    end
+
+    -- Move cursor to bottom empty line
     vim.api.nvim_win_set_cursor(chat_win, { line_count, 0 })
     vim.cmd("startinsert")
   end
