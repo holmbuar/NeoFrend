@@ -15,7 +15,6 @@ local function create_window()
   if not chat_buf or not vim.api.nvim_buf_is_valid(chat_buf) then
     chat_buf = vim.api.nvim_create_buf(false, true)
     vim.api.nvim_set_option_value("buftype", "nofile", { buf = chat_buf })
-    vim.api.nvim_set_option_value("filetype", "markdown", { buf = chat_buf })
     vim.api.nvim_set_option_value("textwidth", 0, { buf = chat_buf })
     vim.api.nvim_set_option_value("wrapmargin", 0, { buf = chat_buf })
 
@@ -71,6 +70,12 @@ local function create_window()
   vim.api.nvim_set_option_value("wrap", true, { win = chat_win })
   vim.api.nvim_set_option_value("conceallevel", 2, { win = chat_win })
   vim.api.nvim_set_option_value("concealcursor", "nc", { win = chat_win })
+  vim.api.nvim_set_option_value("winhighlight", "NormalFloat:Pmenu,FloatBorder:Pmenu", { win = chat_win })
+
+  -- Set filetype and start Treesitter after the window is created to ensure
+  -- that UI plugins (like render-markdown.nvim) correctly attach to the visible buffer.
+  vim.api.nvim_set_option_value("filetype", "markdown", { buf = chat_buf })
+  pcall(vim.treesitter.start, chat_buf, "markdown")
 end
 
 function M.toggle()
@@ -149,6 +154,9 @@ function M.submit_prompt()
     }
     vim.api.nvim_buf_set_lines(chat_buf, -1, -1, false, warning_msg)
     local loading_line = vim.api.nvim_buf_line_count(chat_buf) - 1
+    if chat_win and vim.api.nvim_win_is_valid(chat_win) then
+      vim.api.nvim_win_set_cursor(chat_win, { loading_line + 1, 0 })
+    end
 
     local agent_instruction = "CRITICAL INSTRUCTION: You must ONLY operate within the current working directory (" .. (agent_cwd or vim.fn.getcwd()) .. ") and its subdirectories. Do not modify or read any files outside of this boundary. Task: "
     local cmd = { "gemini", agent_instruction .. prompt, "--approval-mode=yolo", "--model=gemini-3.1-pro-preview" }
@@ -192,6 +200,9 @@ function M.submit_prompt()
   -- Append NeoFrend header and loading state
   vim.api.nvim_buf_set_lines(chat_buf, -1, -1, false, { "", "## NeoFrend", "Thinking..." })
   local loading_line = vim.api.nvim_buf_line_count(chat_buf) - 1
+  if chat_win and vim.api.nvim_win_is_valid(chat_win) then
+    vim.api.nvim_win_set_cursor(chat_win, { loading_line + 1, 0 })
+  end
 
   local api_key = os.getenv("GEMINI_API_KEY")
   if not api_key then
