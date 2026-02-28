@@ -2,7 +2,7 @@ local M = {}
 
 local chat_buf = nil
 local chat_win = nil
-local current_model = "gemini-3-flash-preview"
+local current_model = "gemini-3.1-pro-preview"
 local current_job = nil
 
 local function create_window()
