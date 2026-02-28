@@ -2,7 +2,6 @@ local M = {}
 
 local chat_buf = nil
 local chat_win = nil
-local chat_history = {}
 local current_model = "gemini-3-flash-preview"
 local current_job = nil
 
@@ -18,29 +17,30 @@ local function create_window()
     vim.api.nvim_set_option_value("textwidth", 0, { buf = chat_buf })
     vim.api.nvim_set_option_value("wrapmargin", 0, { buf = chat_buf })
 
-    -- Initialize buffer with User header if empty
     local lines = vim.api.nvim_buf_get_lines(chat_buf, 0, -1, false)
     if #lines == 0 or (#lines == 1 and lines[1] == "") then
       local welcome_msg = {
         "Welcome to **NeoFrend**! Type your prompt below.",
         "",
-        "> **Agent Commands:**",
-        "> - `/do <task>`: Run Gemini CLI agent in the current workspace.",
-        "> - `⚠️ /config <task>`: Run Gemini CLI agent in your Neovim config dir without confirmation.",
+        "> **Modes:**",
+        "> - `/chat <msg>`: Standard conversation (default).",
+        "> - `/do <task>`: Agent mode in current workspace.",
+        "> - `⚠️ /config <task>`: Agent mode in Neovim config.",
+        ">",
+        "> *The active mode is saved in the header (e.g. `## User (/do)`).* ",
+        "> *Subsequent messages will use this mode unless you use a new prefix.*",
         "",
         "---",
-        "## User",
+        "## User (Chat)",
         ""
       }
       vim.api.nvim_buf_set_lines(chat_buf, 0, -1, false, welcome_msg)
     end
 
-    -- Keymap to close
     vim.keymap.set("n", "q", function()
       vim.api.nvim_win_close(0, true)
     end, { buffer = chat_buf, silent = true, desc = "Close NeoFrend" })
 
-    -- Keymap to abort running process
     vim.keymap.set("n", "<Esc>", function()
       if current_job then
         current_job:kill(9)
@@ -49,10 +49,8 @@ local function create_window()
       end
     end, { buffer = chat_buf, silent = true, desc = "Abort running process" })
 
-    -- Keymap to add a new line without submitting
     vim.keymap.set("i", "<S-CR>", "<CR>", { buffer = chat_buf, noremap = true, silent = true, desc = "New line" })
 
-    -- Keymap to submit
     vim.keymap.set({ "n", "i" }, "<CR>", function()
       if vim.fn.mode() == 'i' then
         vim.cmd("stopinsert")
@@ -83,8 +81,6 @@ local function create_window()
   vim.api.nvim_set_option_value("concealcursor", "nc", { win = chat_win })
   vim.api.nvim_set_option_value("winhighlight", "NormalFloat:Pmenu,FloatBorder:Pmenu", { win = chat_win })
 
-  -- Set filetype and start Treesitter after the window is created to ensure
-  -- that UI plugins (like render-markdown.nvim) correctly attach to the visible buffer.
   vim.api.nvim_set_option_value("filetype", "markdown", { buf = chat_buf })
   pcall(vim.treesitter.start, chat_buf, "markdown")
 end
@@ -96,19 +92,83 @@ function M.toggle()
   else
     create_window()
     
-    -- Ensure there is an empty line at the bottom for the user to type
     local line_count = vim.api.nvim_buf_line_count(chat_buf)
     local last_line = vim.api.nvim_buf_get_lines(chat_buf, line_count - 1, line_count, false)[1]
     
-    if last_line == "## User" then
+    if last_line and last_line:match("^## User") then
       vim.api.nvim_buf_set_lines(chat_buf, line_count, line_count, false, { "" })
       line_count = line_count + 1
     end
 
-    -- Move cursor to bottom empty line
     vim.api.nvim_win_set_cursor(chat_win, { line_count, 0 })
     vim.cmd("startinsert")
   end
+end
+
+local function execute_cli(prompt, mode, is_retry, loading_line)
+  local yolo = (mode == "do" or mode == "config")
+  local cwd = (mode == "config") and vim.fn.stdpath("config") or nil
+  
+  -- Prepend a small formatting instruction if it's standard chat
+  local final_prompt = prompt
+  if mode == "chat" then
+    final_prompt = "Format answers cleanly in Markdown without H1/H2 headers.\n\n" .. prompt
+  end
+
+  local cmd = { "gemini", "-p", final_prompt, "--model=" .. current_model }
+  if yolo then
+    table.insert(cmd, "--approval-mode=yolo")
+  end
+  if not is_retry then
+    table.insert(cmd, "-r")
+    table.insert(cmd, "1")
+  end
+
+  local sys_opts = { text = true }
+  if cwd then
+    sys_opts.cwd = cwd
+  end
+
+  current_job = vim.system(cmd, sys_opts, vim.schedule_wrap(function(out)
+    -- If it fails because of no previous session, retry without `-r 1`
+    if out.code == 42 and not is_retry then
+      execute_cli(prompt, mode, true, loading_line)
+      return
+    end
+
+    current_job = nil
+    local reply = out.stdout or ""
+    if out.code ~= 0 then
+      reply = reply .. "\n\n**Error (Code " .. out.code .. "):**\n```\n" .. (out.stderr or "") .. "\n```"
+    end
+    
+    -- Clean up CLI noise and ANSI escapes
+    reply = string.gsub(reply, '\27%[[0-9;]*[mK]', '')
+    reply = string.gsub(reply, "Positional arguments now default to interactive mode%. To run in non%-interactive mode, use the %-%-prompt %(%-p%) flag%.%s*", "")
+    reply = string.gsub(reply, "Loaded cached credentials%.%s*", "")
+    reply = string.gsub(reply, "YOLO mode is enabled%. All tool calls will be automatically approved%.%s*", "")
+    reply = vim.trim(reply)
+
+    if reply == "" then
+      reply = "Task completed with no output."
+    end
+
+    local reply_lines = vim.split(reply, "\n")
+    vim.api.nvim_buf_set_lines(chat_buf, loading_line, loading_line + 1, false, reply_lines)
+    
+    -- Prepare next header based on current mode
+    local next_header = "## User (Chat)"
+    if mode == "do" then next_header = "## User (/do)" end
+    if mode == "config" then next_header = "## User (/config)" end
+    
+    vim.api.nvim_buf_set_lines(chat_buf, -1, -1, false, { "", next_header, "" })
+    
+    local line_count = vim.api.nvim_buf_line_count(chat_buf)
+    if chat_win and vim.api.nvim_win_is_valid(chat_win) then
+      vim.api.nvim_win_set_cursor(chat_win, { line_count, 0 })
+    end
+    vim.cmd("checktime")
+  end))
 end
 
 function M.submit_prompt()
@@ -116,10 +176,12 @@ function M.submit_prompt()
 
   local lines = vim.api.nvim_buf_get_lines(chat_buf, 0, -1, false)
   local prompt_lines = {}
+  local last_header = "## User (Chat)"
 
   -- Find the last User block
   for i = #lines, 1, -1 do
-    if lines[i] == "## User" then
+    if lines[i]:match("^## User") then
+      last_header = lines[i]
       for j = i + 1, #lines do
         table.insert(prompt_lines, lines[j])
       end
@@ -130,161 +192,39 @@ function M.submit_prompt()
   local prompt = vim.fn.join(prompt_lines, "\n")
   prompt = vim.trim(prompt)
   if prompt == "" then
-    print("Empty prompt. Type something under '## User' before pressing Enter.")
+    print("Empty prompt. Type something under the header before pressing Enter.")
     return
   end
 
-  local is_agent = false
-  local agent_cwd = nil
-  local display_cmd = ""
-  local target_env = "local workspace"
+  -- Determine inherited mode from the header
+  local mode = "chat"
+  if last_header:match("%(/do%)") then mode = "do" end
+  if last_header:match("%(/config%)") then mode = "config" end
+  if last_header:match("%(Chat%)") then mode = "chat" end
 
+  -- Override mode if a prefix is used
   if string.sub(prompt, 1, 4) == "/do " then
-    is_agent = true
-    display_cmd = "/do"
+    mode = "do"
     prompt = vim.trim(string.sub(prompt, 5))
   elseif string.sub(prompt, 1, 8) == "/config " then
-    is_agent = true
-    display_cmd = "/config"
-    target_env = "Neovim configuration (" .. vim.fn.stdpath("config") .. ")"
-    agent_cwd = vim.fn.stdpath("config")
+    mode = "config"
     prompt = vim.trim(string.sub(prompt, 9))
+  elseif string.sub(prompt, 1, 6) == "/chat " then
+    mode = "chat"
+    prompt = vim.trim(string.sub(prompt, 7))
   end
 
-  if is_agent then
-    table.insert(chat_history, { role = "user", parts = { { text = display_cmd .. " " .. prompt } } })
-    
-    local warning_msg = {
-      "", 
-      "## NeoFrend (Agent)", 
-      "**⚠️ WARNING: Entering Autonomous Mode**",
-      "> The agent is now executing commands and modifying files in your **" .. target_env .. "** without confirmation.",
-      "> *NeoFrend developers assume no responsibility for data loss or unintended changes.*",
-      "",
-      "Running Gemini CLI agent... (this may take a while)"
-    }
-    vim.api.nvim_buf_set_lines(chat_buf, -1, -1, false, warning_msg)
-    local loading_line = vim.api.nvim_buf_line_count(chat_buf) - 1
-    if chat_win and vim.api.nvim_win_is_valid(chat_win) then
-      vim.api.nvim_win_set_cursor(chat_win, { loading_line + 1, 0 })
-    end
+  local ai_header = "## NeoFrend"
+  if mode == "do" then ai_header = "## NeoFrend (Workspace Agent)" end
+  if mode == "config" then ai_header = "## NeoFrend (Config Agent)" end
 
-    local agent_instruction = "CRITICAL INSTRUCTION: You must ONLY operate within the current working directory (" .. (agent_cwd or vim.fn.getcwd()) .. ") and its subdirectories. Do not modify or read any files outside of this boundary. Task: "
-    local cmd = { "gemini", agent_instruction .. prompt, "--approval-mode=yolo", "--model=gemini-3.1-pro-preview" }
-    local sys_opts = { text = true }
-    if agent_cwd then
-      sys_opts.cwd = agent_cwd
-    end
-    
-    current_job = vim.system(cmd, sys_opts, vim.schedule_wrap(function(out)
-      current_job = nil
-      local reply = out.stdout or ""
-      if out.code ~= 0 then
-        reply = reply .. "\n\n**Error:**\n```\n" .. (out.stderr or "") .. "\n```"
-      end
-      
-      -- Clean ANSI escape sequences from the CLI output
-      reply = string.gsub(reply, '\27%[[0-9;]*[mK]', '')
-      reply = vim.trim(reply)
-      if reply == "" then
-        reply = "Task completed with no output."
-      end
-
-      table.insert(chat_history, { role = "model", parts = { { text = reply } } })
-
-      local reply_lines = vim.split(reply, "\n")
-      vim.api.nvim_buf_set_lines(chat_buf, loading_line, loading_line + 1, false, reply_lines)
-      vim.api.nvim_buf_set_lines(chat_buf, -1, -1, false, { "", "## User", "" })
-      
-      local line_count = vim.api.nvim_buf_line_count(chat_buf)
-      if chat_win and vim.api.nvim_win_is_valid(chat_win) then
-        vim.api.nvim_win_set_cursor(chat_win, { line_count, 0 })
-      end
-      vim.cmd("checktime")
-    end))
-    return
-  end
-
-  -- Add to history
-  table.insert(chat_history, { role = "user", parts = { { text = prompt } } })
-
-  -- Append NeoFrend header and loading state
-  vim.api.nvim_buf_set_lines(chat_buf, -1, -1, false, { "", "## NeoFrend", "Thinking..." })
+  vim.api.nvim_buf_set_lines(chat_buf, -1, -1, false, { "", ai_header, "Thinking..." })
   local loading_line = vim.api.nvim_buf_line_count(chat_buf) - 1
   if chat_win and vim.api.nvim_win_is_valid(chat_win) then
     vim.api.nvim_win_set_cursor(chat_win, { loading_line + 1, 0 })
   end
 
-  local api_key = os.getenv("GEMINI_API_KEY")
-  if not api_key then
-    vim.api.nvim_buf_set_lines(chat_buf, loading_line, loading_line + 1, false, { "Error: GEMINI_API_KEY environment variable not set." })
-    vim.api.nvim_buf_set_lines(chat_buf, -1, -1, false, { "", "## User", "" })
-    return
-  end
-
-  local url = "https://generativelanguage.googleapis.com/v1beta/models/" .. current_model .. ":generateContent?key=" .. api_key
-
-  local system_prompt = [[
-You are an expert Neovim assistant embedded directly within the user's editor.
-Your goal is to infer the user's competence level based on their question and adjust your tone and detail accordingly.
-- For a "total noob" (e.g., asking "how to exit?" or "what is a buffer?"): Provide super short, friendly, and encouraging advice. Briefly explain Neovim terminology (e.g., clarify that a "buffer" is essentially an open "file", `<C>` means the "Control" key, and `<Leader>` usually means the "Spacebar").
-- For a more experienced user (e.g., asking "how to map a key to a lua function" or "how to toggle Neogit"): Provide concise, direct, and technical answers without patronizing explanations of basic concepts. Provide code snippets directly.
-Format your answers in clean, standard Markdown.
-- DO NOT use H1 or H2 headers (e.g. # or ##) in your response, as they interfere with the chat UI. Use H3 (###) or bold text instead.
-- Always use Markdown code blocks with the correct language identifier for code snippets.
-- Use bullet points and formatting to make your answers easily scannable.
-- Prioritize using native vim or lua API solutions when appropriate.
-]]
-
-  local payload = {
-    contents = chat_history,
-    systemInstruction = {
-      role = "system",
-      parts = { { text = system_prompt } }
-    }
-  }
-
-  local json_payload = vim.fn.json_encode(payload)
-  local tmp_file = vim.fn.tempname()
-  vim.fn.writefile({json_payload}, tmp_file)
-
-  current_job = vim.system({
-    "curl", "-s", "-X", "POST",
-    "-H", "Content-Type: application/json",
-    "-d", "@" .. tmp_file,
-    url
-  }, { text = true }, vim.schedule_wrap(function(out)
-    current_job = nil
-    vim.fn.delete(tmp_file)
-    if out.code ~= 0 then
-      vim.api.nvim_buf_set_lines(chat_buf, loading_line, loading_line + 1, false, { "Error: Network request failed." })
-      return
-    end
-
-    local ok, response = pcall(vim.fn.json_decode, out.stdout)
-    if not ok or not response or response.error then
-      local err_msg = response and response.error and response.error.message or "Invalid API response."
-      vim.api.nvim_buf_set_lines(chat_buf, loading_line, loading_line + 1, false, { "Error: " .. err_msg })
-      return
-    end
-
-    local reply = ""
-    if response.candidates and response.candidates[1] and response.candidates[1].content and response.candidates[1].content.parts then
-      reply = response.candidates[1].content.parts[1].text
-    end
-
-    table.insert(chat_history, { role = "model", parts = { { text = reply } } })
-
-    local reply_lines = vim.split(reply, "\n")
-    vim.api.nvim_buf_set_lines(chat_buf, loading_line, loading_line + 1, false, reply_lines)
-    vim.api.nvim_buf_set_lines(chat_buf, -1, -1, false, { "", "## User", "" })
-    
-    -- Scroll to bottom
-    local line_count = vim.api.nvim_buf_line_count(chat_buf)
-    if chat_win and vim.api.nvim_win_is_valid(chat_win) then
-      vim.api.nvim_win_set_cursor(chat_win, { line_count, 0 })
-    end
-  end))
+  execute_cli(prompt, mode, false, loading_line)
 end
 
 function M.setup()
