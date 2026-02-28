@@ -21,7 +21,18 @@ local function create_window()
     -- Initialize buffer with User header if empty
     local lines = vim.api.nvim_buf_get_lines(chat_buf, 0, -1, false)
     if #lines == 0 or (#lines == 1 and lines[1] == "") then
-      vim.api.nvim_buf_set_lines(chat_buf, 0, -1, false, { "## User", "" })
+      local welcome_msg = {
+        "Welcome to **NeoFrend**! Type your prompt below.",
+        "",
+        "> **Agent Commands:**",
+        "> - `/do <task>`: Run Gemini CLI agent in the current workspace.",
+        "> - `⚠️ /config <task>`: Run Gemini CLI agent in your Neovim config dir without confirmation.",
+        "",
+        "---",
+        "## User",
+        ""
+      }
+      vim.api.nvim_buf_set_lines(chat_buf, 0, -1, false, welcome_msg)
     end
 
     -- Keymap to close
